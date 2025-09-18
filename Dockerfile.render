@@ -1,0 +1,39 @@
+# syntax=docker/dockerfile:1
+### 1) build stage - heavier, with dev tools
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+# install pnpm (bolt.diy uses pnpm)
+RUN npm install -g pnpm
+
+# copy package files first (cache speed)
+COPY package.json pnpm-lock.yaml* ./
+
+# install dependencies
+RUN pnpm install --frozen-lockfile || pnpm install
+
+# copy code and build
+COPY . .
+RUN pnpm build
+
+### 2) runtime stage - small image with only what we need
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+# copy only built files and needed package.json (if any runtime deps)
+COPY --from=builder /app/dist ./dist
+# copy server file (we added it)
+COPY --from=builder /app/server.js ./server.js
+COPY --from=builder /app/package.json ./package.json
+
+# install a tiny web server runtime (only express is needed if used)
+RUN npm install express --no-audit --no-fund --production
+
+# tell Docker which port the container listens on (just for docs)
+EXPOSE 3000
+
+# production env
+ENV NODE_ENV=production
+
+# start the server. The server reads process.env.PORT (Render sets it).
+CMD ["node", "server.js"]
